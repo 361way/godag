@@ -8,8 +8,8 @@ import (
 	"io/fs"
 	"net/http"
 
-	"dag-app/internal/manager"
 	"dag-app/internal/model"
+	"dag-app/internal/store"
 )
 
 //go:embed static/*
@@ -17,12 +17,12 @@ var staticFS embed.FS
 
 // Server HTTP 服务
 type Server struct {
-	mgr *manager.Manager
+	store *store.Store
 }
 
 // NewServer 创建 Web 服务
-func NewServer(mgr *manager.Manager) *Server {
-	return &Server{mgr: mgr}
+func NewServer(st *store.Store) *Server {
+	return &Server{store: st}
 }
 
 // Handler 返回配置好的路由处理器
@@ -33,7 +33,13 @@ func (s *Server) Handler() http.Handler {
 	sub, _ := fs.Sub(staticFS, "static")
 	mux.Handle("/", http.FileServer(http.FS(sub)))
 
-	// API 路由
+	// 流水线维度
+	mux.HandleFunc("/api/pipelines", s.handlePipelines)
+	mux.HandleFunc("/api/pipeline/create", s.handlePipelineCreate)
+	mux.HandleFunc("/api/pipeline/delete", s.handlePipelineDelete)
+	mux.HandleFunc("/api/pipeline/schedule", s.handleSchedule)
+
+	// 单流水线内的操作（通过 ?pipeline=<id> 指定，缺省取第一个）
 	mux.HandleFunc("/api/dag", s.handleDAG)
 	mux.HandleFunc("/api/dag/meta", s.handleDAGMeta)
 	mux.HandleFunc("/api/run", s.handleRun)
@@ -77,98 +83,60 @@ func writeErr(w http.ResponseWriter, code int, msg string) {
 	writeJSON(w, code, map[string]string{"error": msg})
 }
 
-// GET /api/dag 返回 DAG 结构与节点状态
-func (s *Server) handleDAG(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, s.mgr.GetInfo())
+/* ========================= 流水线管理 ========================= */
+
+// pipelineSummary 流水线列表的精简视图
+type pipelineSummary struct {
+	ID          string          `json:"id"`
+	Name        string          `json:"name"`
+	Description string          `json:"description"`
+	Running     bool            `json:"running"`
+	NodeCount   int             `json:"node_count"`
+	Schedule    *model.Schedule `json:"schedule"`
 }
 
-// POST /api/run 触发一次执行
-func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeErr(w, http.StatusMethodNotAllowed, "仅支持 POST")
-		return
+// GET /api/pipelines 返回全部流水线概要
+func (s *Server) handlePipelines(w http.ResponseWriter, r *http.Request) {
+	infos := s.store.List()
+	out := make([]pipelineSummary, 0, len(infos))
+	for _, info := range infos {
+		out = append(out, pipelineSummary{
+			ID:          info.ID,
+			Name:        info.Name,
+			Description: info.Description,
+			Running:     info.Running,
+			NodeCount:   len(info.Nodes),
+			Schedule:    info.Schedule,
+		})
 	}
-	run, err := s.mgr.TriggerRun(context.Background())
-	if err != nil {
-		writeErr(w, http.StatusConflict, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]string{"run_id": run.ID})
+	writeJSON(w, http.StatusOK, out)
 }
 
-// GET /api/runs 返回执行历史
-func (s *Server) handleRuns(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, s.mgr.ListRuns())
-}
-
-// GET /api/run/{id} 返回指定执行详情；id 为 latest 时返回最近一次
-func (s *Server) handleRunDetail(w http.ResponseWriter, r *http.Request) {
-	id := r.URL.Path[len("/api/run/"):]
-	if id == "" {
-		writeErr(w, http.StatusBadRequest, "缺少 run id")
-		return
-	}
-	if id == "latest" {
-		run := s.mgr.LatestRun()
-		if run == nil {
-			writeErr(w, http.StatusNotFound, "暂无执行记录")
-			return
-		}
-		writeJSON(w, http.StatusOK, run)
-		return
-	}
-	run, err := s.mgr.GetRun(id)
-	if err != nil {
-		writeErr(w, http.StatusNotFound, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, run)
-}
-
-// POST /api/node/enable 通过参数控制节点开关
-// body: {"id": "node1", "enabled": true}
-func (s *Server) handleNodeEnable(w http.ResponseWriter, r *http.Request) {
+// POST /api/pipeline/create body: {"id":"p1","name":"...","description":"..."}
+func (s *Server) handlePipelineCreate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeErr(w, http.StatusMethodNotAllowed, "仅支持 POST")
 		return
 	}
 	var req struct {
-		ID      string `json:"id"`
-		Enabled bool   `json:"enabled"`
+		ID          string `json:"id"`
+		Name        string `json:"name"`
+		Description string `json:"description"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, http.StatusBadRequest, "请求体解析失败")
 		return
 	}
-	if err := s.mgr.SetNodeEnabled(req.ID, req.Enabled); err != nil {
+	mgr, err := s.store.Create(req.ID, req.Name, req.Description)
+	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	writeJSON(w, http.StatusOK, map[string]string{"id": mgr.ID()})
 }
 
-// POST /api/node/save 新增或更新节点（按 id 区分）
-// body 为完整的节点对象
-func (s *Server) handleNodeSave(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeErr(w, http.StatusMethodNotAllowed, "仅支持 POST")
-		return
-	}
-	var n model.Node
-	if err := json.NewDecoder(r.Body).Decode(&n); err != nil {
-		writeErr(w, http.StatusBadRequest, "请求体解析失败")
-		return
-	}
-	if err := s.mgr.SaveNode(&n); err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
-}
-
-// POST /api/node/delete 删除节点
-// body: {"id": "node1"}
-func (s *Server) handleNodeDelete(w http.ResponseWriter, r *http.Request) {
+// POST /api/pipeline/delete body: {"id":"p1"}
+func (s *Server) handlePipelineDelete(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeErr(w, http.StatusMethodNotAllowed, "仅支持 POST")
 		return
@@ -180,18 +148,189 @@ func (s *Server) handleNodeDelete(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "请求体解析失败")
 		return
 	}
-	if err := s.mgr.DeleteNode(req.ID); err != nil {
+	if err := s.store.Delete(req.ID); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
-// POST /api/node/position 更新节点画布坐标
-// body: {"id": "node1", "x": 100, "y": 200}
+// POST /api/pipeline/schedule?pipeline=<id> body 为调度配置
+func (s *Server) handleSchedule(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, http.StatusMethodNotAllowed, "仅支持 POST")
+		return
+	}
+	m, err := s.store.Get(r.URL.Query().Get("pipeline"))
+	if err != nil {
+		writeErr(w, http.StatusNotFound, err.Error())
+		return
+	}
+	var sch model.Schedule
+	if err := json.NewDecoder(r.Body).Decode(&sch); err != nil {
+		writeErr(w, http.StatusBadRequest, "请求体解析失败")
+		return
+	}
+	if err := m.UpdateSchedule(&sch); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+/* ========================= 单流水线内操作 ========================= */
+
+// GET /api/dag?pipeline=<id> 返回 DAG 结构与节点状态
+func (s *Server) handleDAG(w http.ResponseWriter, r *http.Request) {
+	m, err := s.store.Get(r.URL.Query().Get("pipeline"))
+	if err != nil {
+		writeErr(w, http.StatusNotFound, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, m.GetInfo())
+}
+
+// POST /api/run?pipeline=<id> 触发一次执行
+func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, http.StatusMethodNotAllowed, "仅支持 POST")
+		return
+	}
+	m, err := s.store.Get(r.URL.Query().Get("pipeline"))
+	if err != nil {
+		writeErr(w, http.StatusNotFound, err.Error())
+		return
+	}
+	run, err := m.TriggerRun(context.Background())
+	if err != nil {
+		writeErr(w, http.StatusConflict, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"run_id": run.ID})
+}
+
+// GET /api/runs?pipeline=<id> 返回执行历史
+func (s *Server) handleRuns(w http.ResponseWriter, r *http.Request) {
+	m, err := s.store.Get(r.URL.Query().Get("pipeline"))
+	if err != nil {
+		writeErr(w, http.StatusNotFound, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, m.ListRuns())
+}
+
+// GET /api/run/{id}?pipeline=<id> 返回指定执行详情；id 为 latest 时返回最近一次
+func (s *Server) handleRunDetail(w http.ResponseWriter, r *http.Request) {
+	m, err := s.store.Get(r.URL.Query().Get("pipeline"))
+	if err != nil {
+		writeErr(w, http.StatusNotFound, err.Error())
+		return
+	}
+	id := r.URL.Path[len("/api/run/"):]
+	if id == "" {
+		writeErr(w, http.StatusBadRequest, "缺少 run id")
+		return
+	}
+	if id == "latest" {
+		run := m.LatestRun()
+		if run == nil {
+			writeErr(w, http.StatusNotFound, "暂无执行记录")
+			return
+		}
+		writeJSON(w, http.StatusOK, run)
+		return
+	}
+	run, err := m.GetRun(id)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, run)
+}
+
+// POST /api/node/enable?pipeline=<id> body: {"id": "node1", "enabled": true}
+func (s *Server) handleNodeEnable(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, http.StatusMethodNotAllowed, "仅支持 POST")
+		return
+	}
+	m, err := s.store.Get(r.URL.Query().Get("pipeline"))
+	if err != nil {
+		writeErr(w, http.StatusNotFound, err.Error())
+		return
+	}
+	var req struct {
+		ID      string `json:"id"`
+		Enabled bool   `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "请求体解析失败")
+		return
+	}
+	if err := m.SetNodeEnabled(req.ID, req.Enabled); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// POST /api/node/save?pipeline=<id> body 为完整节点对象
+func (s *Server) handleNodeSave(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, http.StatusMethodNotAllowed, "仅支持 POST")
+		return
+	}
+	m, err := s.store.Get(r.URL.Query().Get("pipeline"))
+	if err != nil {
+		writeErr(w, http.StatusNotFound, err.Error())
+		return
+	}
+	var n model.Node
+	if err := json.NewDecoder(r.Body).Decode(&n); err != nil {
+		writeErr(w, http.StatusBadRequest, "请求体解析失败")
+		return
+	}
+	if err := m.SaveNode(&n); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// POST /api/node/delete?pipeline=<id> body: {"id": "node1"}
+func (s *Server) handleNodeDelete(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, http.StatusMethodNotAllowed, "仅支持 POST")
+		return
+	}
+	m, err := s.store.Get(r.URL.Query().Get("pipeline"))
+	if err != nil {
+		writeErr(w, http.StatusNotFound, err.Error())
+		return
+	}
+	var req struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "请求体解析失败")
+		return
+	}
+	if err := m.DeleteNode(req.ID); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// POST /api/node/position?pipeline=<id> body: {"id": "node1", "x": 100, "y": 200}
 func (s *Server) handleNodePosition(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeErr(w, http.StatusMethodNotAllowed, "仅支持 POST")
+		return
+	}
+	m, err := s.store.Get(r.URL.Query().Get("pipeline"))
+	if err != nil {
+		writeErr(w, http.StatusNotFound, err.Error())
 		return
 	}
 	var req struct {
@@ -203,17 +342,22 @@ func (s *Server) handleNodePosition(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "请求体解析失败")
 		return
 	}
-	if err := s.mgr.SetNodePosition(req.ID, req.X, req.Y); err != nil {
+	if err := m.SetNodePosition(req.ID, req.X, req.Y); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
-// POST /api/dag/meta 更新 DAG 名称与描述
+// POST /api/dag/meta?pipeline=<id> 更新名称与描述
 func (s *Server) handleDAGMeta(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeErr(w, http.StatusMethodNotAllowed, "仅支持 POST")
+		return
+	}
+	m, err := s.store.Get(r.URL.Query().Get("pipeline"))
+	if err != nil {
+		writeErr(w, http.StatusNotFound, err.Error())
 		return
 	}
 	var req struct {
@@ -224,7 +368,7 @@ func (s *Server) handleDAGMeta(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "请求体解析失败")
 		return
 	}
-	if err := s.mgr.UpdateMeta(req.Name, req.Description); err != nil {
+	if err := m.UpdateMeta(req.Name, req.Description); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}

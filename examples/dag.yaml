@@ -114,5 +114,5 @@ nodes:
       workdir: ""
       env: []
       timeout_sec: 0
-      x: 628
-      "y": 448
+      x: 620
+      "y": 360

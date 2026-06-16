@@ -42,11 +42,13 @@ func New(cfg *model.DAGConfig, maxParallel int, configPath string) (*Manager, er
 
 // Info DAG 概要信息
 type Info struct {
-	Name        string        `json:"name"`
-	Description string        `json:"description"`
-	Nodes       []*NodeView   `json:"nodes"`
-	Running     bool          `json:"running"`
-	TopoOrder   []string      `json:"topo_order"`
+	ID          string          `json:"id"`
+	Name        string          `json:"name"`
+	Description string          `json:"description"`
+	Schedule    *model.Schedule `json:"schedule"`
+	Nodes       []*NodeView     `json:"nodes"`
+	Running     bool            `json:"running"`
+	TopoOrder   []string        `json:"topo_order"`
 }
 
 // NodeView 提供给前端的节点视图（包含全部可编辑字段）
@@ -92,12 +94,58 @@ func (m *Manager) GetInfo() *Info {
 	topo, _ := m.dag.TopoOrder()
 
 	return &Info{
+		ID:          m.cfg.ID,
 		Name:        m.cfg.Name,
 		Description: m.cfg.Description,
+		Schedule:    m.cfg.Schedule,
 		Nodes:       views,
 		Running:     m.running,
 		TopoOrder:   topo,
 	}
+}
+
+// ID 返回流水线唯一标识
+func (m *Manager) ID() string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.cfg.ID
+}
+
+// GetSchedule 返回当前调度配置的副本（可能为 nil）
+func (m *Manager) GetSchedule() *model.Schedule {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.cfg.Schedule == nil {
+		return nil
+	}
+	cp := *m.cfg.Schedule
+	return &cp
+}
+
+// IsRunning 返回是否有执行进行中
+func (m *Manager) IsRunning() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.running
+}
+
+// UpdateSchedule 更新调度配置并持久化。type 变更或重新启用时会重置一次性任务的 Fired 标记。
+func (m *Manager) UpdateSchedule(sch *model.Schedule) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.cfg.Schedule = sch
+	return m.persistLocked()
+}
+
+// MarkScheduleFired 标记一次性调度已触发并持久化，避免重复执行
+func (m *Manager) MarkScheduleFired() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.cfg.Schedule == nil {
+		return nil
+	}
+	m.cfg.Schedule.Fired = true
+	return m.persistLocked()
 }
 
 // SetNodeEnabled 启用/禁用指定节点

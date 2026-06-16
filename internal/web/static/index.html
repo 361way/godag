@@ -16,10 +16,11 @@
   header {
     background: #111a2e; padding: 10px 18px; display: flex;
     align-items: center; justify-content: space-between;
-    border-bottom: 1px solid #1f2a44; flex-shrink: 0; z-index: 20;
+    border-bottom: 1px solid #1f2a44; flex-shrink: 0; z-index: 20; gap: 12px;
   }
-  header h1 { font-size: 16px; font-weight: 600; cursor: pointer; }
-  header .desc { color: #94a3b8; font-size: 12px; margin-top: 1px; }
+  header h1 { font-size: 15px; font-weight: 600; cursor: pointer; }
+  header .desc { color: #94a3b8; font-size: 12px; margin-top: 1px; max-width: 320px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .toolbar { display: flex; gap: 8px; align-items: center; }
   button {
     background: #2563eb; color: #fff; border: none; padding: 7px 14px;
@@ -32,9 +33,14 @@
   button.danger { background: #b91c1c; }
   button.danger:hover { background: #991b1b; }
   button.small { padding: 4px 10px; font-size: 12px; }
+  select {
+    background: #1e293b; color: #e2e8f0; border: 1px solid #334155;
+    padding: 7px 10px; border-radius: 6px; font-size: 13px; cursor: pointer; max-width: 220px;
+  }
   .status-pill { padding: 3px 12px; border-radius: 999px; font-size: 12px; font-weight: 600; }
   .row { display: flex; align-items: center; gap: 8px; }
   .muted { color: #64748b; font-size: 12px; }
+  .pipe-bar { display: flex; align-items: center; gap: 8px; }
 
   /* 主体：画布 + 侧栏 */
   .main { flex: 1; display: flex; min-height: 0; }
@@ -105,6 +111,8 @@
   .zoom-ctl button { background: #1e293b; padding: 3px 9px; font-size: 14px; }
   .hint-tip { position: absolute; right: 14px; top: 14px; background: #111a2e; border: 1px solid #1f2a44;
     border-radius: 8px; padding: 8px 12px; font-size: 11px; color: #94a3b8; z-index: 10; max-width: 230px; }
+  .empty-canvas { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    flex-direction: column; gap: 14px; color: #64748b; font-size: 14px; }
 
   /* 侧栏 */
   .sidebar { width: 340px; background: #0d1426; border-left: 1px solid #1f2a44; display: flex;
@@ -138,20 +146,45 @@
     padding: 4px 8px; border-radius: 6px; font-size: 12px; cursor: pointer; }
   .dep-chip.active { background: #1d4ed8; border-color: #3b82f6; color: #fff; }
   .panel-empty { color: #64748b; font-size: 13px; text-align: center; margin-top: 40px; }
+
+  /* 弹窗 */
+  .modal-mask { position: fixed; inset: 0; background: rgba(2,6,23,.7); display: none;
+    align-items: center; justify-content: center; z-index: 50; }
+  .modal-mask.show { display: flex; }
+  .modal { background: #111a2e; border: 1px solid #1f2a44; border-radius: 12px; width: 420px;
+    max-width: 92vw; padding: 20px; box-shadow: 0 20px 60px rgba(0,0,0,.5); }
+  .modal h2 { font-size: 16px; margin-bottom: 14px; }
+  .modal .row-end { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+  .seg { display: flex; gap: 8px; }
+  .seg label { flex: 1; text-align: center; padding: 8px; border: 1px solid #334155; border-radius: 6px;
+    cursor: pointer; font-size: 13px; background: #060b18; }
+  .seg input { display: none; }
+  .seg label.on { background: #1d4ed8; border-color: #3b82f6; color: #fff; }
+  .cron-presets { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+  .cron-presets span { background: #060b18; border: 1px solid #334155; border-radius: 6px;
+    padding: 3px 7px; font-size: 11px; cursor: pointer; color: #94a3b8; }
+  .cron-presets span:hover { border-color: #2563eb; color: #e2e8f0; }
 </style>
 </head>
 <body>
 <header>
-  <div>
-    <h1 id="dag-name" title="点击编辑名称/描述">DAG 工作流</h1>
-    <div class="desc" id="dag-desc"></div>
+  <div class="pipe-bar">
+    <select id="pipeline-select" title="切换流水线"></select>
+    <button class="ghost small" id="btn-new-pipe" title="新建流水线">＋ 流水线</button>
+    <button class="ghost small danger" id="btn-del-pipe" title="删除当前流水线">🗑</button>
+    <div style="margin-left:6px">
+      <h1 id="dag-name" title="点击编辑名称/描述">DAG 工作流</h1>
+      <div class="desc" id="dag-desc"></div>
+    </div>
   </div>
   <div class="toolbar">
+    <span class="status-pill badge-pending" id="sched-badge" style="display:none"></span>
     <span class="status-pill badge-pending" id="global-status">就绪</span>
     <button id="btn-run">▶ 运行</button>
+    <button class="ghost" id="btn-sched">⏰ 计划</button>
     <button class="ghost" id="btn-add">＋ 节点</button>
-    <button class="ghost" id="btn-layout">⊞ 自动布局</button>
-    <button class="ghost small" id="btn-fit">适应视图</button>
+    <button class="ghost" id="btn-layout">⊞ 布局</button>
+    <button class="ghost small" id="btn-fit">适应</button>
     <label class="row muted" style="margin-left:4px"><input type="checkbox" id="auto-refresh" checked> 自动刷新</label>
   </div>
 </header>
@@ -160,7 +193,6 @@
   <div class="canvas-wrap" id="canvas">
     <div class="viewport" id="viewport">
       <svg class="edges" id="edges"></svg>
-      <!-- 节点动态插入 -->
     </div>
     <div class="hint-tip">
       拖拽节点头部移动 · 拖空白处平移 · 滚轮缩放<br>
@@ -171,6 +203,10 @@
       <button id="zoom-out">－</button>
       <span class="muted" id="zoom-level" style="min-width:42px;text-align:center">100%</span>
       <button id="zoom-in">＋</button>
+    </div>
+    <div class="empty-canvas" id="empty-canvas" style="display:none">
+      <div>还没有任何流水线</div>
+      <button id="btn-new-pipe2">＋ 新建第一个流水线</button>
     </div>
   </div>
 
@@ -189,19 +225,62 @@
   </div>
 </div>
 
+<!-- 计划任务弹窗 -->
+<div class="modal-mask" id="sched-modal">
+  <div class="modal">
+    <h2>计划任务设置</h2>
+    <div class="field">
+      <label class="row"><input type="checkbox" id="sc-enabled" style="width:auto"> 启用计划任务</label>
+    </div>
+    <div class="field">
+      <label>调度类型</label>
+      <div class="seg">
+        <label id="seg-cron"><input type="radio" name="sctype" value="cron" checked> 周期性 (cron)</label>
+        <label id="seg-once"><input type="radio" name="sctype" value="once"> 一次性</label>
+      </div>
+    </div>
+    <div class="field" id="sc-cron-wrap">
+      <label>Cron 表达式（分 时 日 月 周）</label>
+      <input id="sc-cron" placeholder="*/5 * * * *">
+      <div class="cron-presets" id="cron-presets">
+        <span data-c="*/5 * * * *">每5分钟</span>
+        <span data-c="0 * * * *">每小时</span>
+        <span data-c="0 9 * * *">每天9点</span>
+        <span data-c="0 9 * * 1">每周一9点</span>
+        <span data-c="0 0 1 * *">每月1号</span>
+      </div>
+    </div>
+    <div class="field" id="sc-once-wrap" style="display:none">
+      <label>执行时间</label>
+      <input id="sc-at" type="datetime-local">
+      <div class="hint">到达该时间后自动执行一次（已过期则不执行）</div>
+    </div>
+    <div class="row-end">
+      <button class="ghost" id="sc-cancel">取消</button>
+      <button id="sc-save">保存</button>
+    </div>
+  </div>
+</div>
+
 <script>
 /* ============ API ============ */
+let currentPid = '';
+function q(extra) { return '?pipeline=' + encodeURIComponent(currentPid) + (extra ? '&' + extra : ''); }
 const api = {
-  dag:    () => fetch('/api/dag').then(r => r.json()),
-  run:    () => fetch('/api/run', { method: 'POST' }).then(r => r.json()),
-  runs:   () => fetch('/api/runs').then(r => r.json()),
-  runById:(id) => fetch('/api/run/' + id).then(r => r.ok ? r.json() : null),
-  latest: () => fetch('/api/run/latest').then(r => r.ok ? r.json() : null),
-  enable: (id, enabled) => post('/api/node/enable', { id, enabled }),
-  saveNode: (node) => post('/api/node/save', node),
-  deleteNode: (id) => post('/api/node/delete', { id }),
-  savePos: (id, x, y) => post('/api/node/position', { id, x, y }),
-  saveMeta: (name, description) => post('/api/dag/meta', { name, description }),
+  pipelines: () => fetch('/api/pipelines').then(r => r.json()),
+  createPipeline: (b) => post('/api/pipeline/create', b),
+  deletePipeline: (id) => post('/api/pipeline/delete', { id }),
+  saveSchedule: (sch) => post('/api/pipeline/schedule' + q(), sch),
+  dag:    () => fetch('/api/dag' + q()).then(r => r.json()),
+  run:    () => fetch('/api/run' + q(), { method: 'POST' }).then(r => r.json()),
+  runs:   () => fetch('/api/runs' + q()).then(r => r.json()),
+  runById:(id) => fetch('/api/run/' + id + q()).then(r => r.ok ? r.json() : null),
+  latest: () => fetch('/api/run/latest' + q()).then(r => r.ok ? r.json() : null),
+  enable: (id, enabled) => post('/api/node/enable' + q(), { id, enabled }),
+  saveNode: (node) => post('/api/node/save' + q(), node),
+  deleteNode: (id) => post('/api/node/delete' + q(), { id }),
+  savePos: (id, x, y) => post('/api/node/position' + q(), { id, x, y }),
+  saveMeta: (name, description) => post('/api/dag/meta' + q(), { name, description }),
 };
 function post(url, body) {
   return fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) }).then(r => r.json());
@@ -213,13 +292,14 @@ function statusText(s) { return ({pending:'等待',running:'执行中',success:'
 
 /* ============ 状态 ============ */
 const NODE_W = 200;
-const PORT_Y = 21;           // 端口相对节点顶部的 y
-let nodes = [];              // 当前节点数组
+const PORT_Y = 21;
+let pipelines = [];
+let nodes = [];
 let nodeById = {};
-let statusMap = {};          // id -> status
+let statusMap = {};
 let selectedId = null;
-let viewRunId = 'latest';    // 当前查看的运行
-const view = { x: 60, y: 40, k: 1 };  // 平移/缩放
+let viewRunId = 'latest';
+const view = { x: 60, y: 40, k: 1 };
 
 const canvas = document.getElementById('canvas');
 const viewport = document.getElementById('viewport');
@@ -234,9 +314,122 @@ function toCanvas(clientX, clientY) {
   return { x: (clientX - r.left - view.x) / view.k, y: (clientY - r.top - view.y) / view.k };
 }
 
+/* ============ 流水线管理 ============ */
+async function loadPipelines(keepCurrent) {
+  pipelines = await api.pipelines();
+  const sel = document.getElementById('pipeline-select');
+  if (!keepCurrent || !pipelines.find(p => p.id === currentPid)) {
+    currentPid = pipelines.length ? pipelines[0].id : '';
+  }
+  sel.innerHTML = pipelines.map(p =>
+    `<option value="${escapeHtml(p.id)}" ${p.id === currentPid ? 'selected' : ''}>${escapeHtml(p.name || p.id)}${p.schedule && p.schedule.enabled ? ' ⏰' : ''}</option>`
+  ).join('');
+  const has = pipelines.length > 0;
+  document.getElementById('empty-canvas').style.display = has ? 'none' : 'flex';
+  ['btn-run','btn-sched','btn-add','btn-layout','btn-fit','btn-del-pipe'].forEach(id => document.getElementById(id).disabled = !has);
+  updateSchedBadge();
+}
+
+function currentPipeline() { return pipelines.find(p => p.id === currentPid); }
+
+function updateSchedBadge() {
+  const p = currentPipeline();
+  const b = document.getElementById('sched-badge');
+  if (p && p.schedule && p.schedule.enabled) {
+    const s = p.schedule;
+    b.style.display = '';
+    b.className = 'status-pill badge-success';
+    b.textContent = s.type === 'once' ? ('⏰ ' + (s.at || '一次性')) : ('⏰ ' + (s.cron || 'cron'));
+  } else {
+    b.style.display = 'none';
+  }
+}
+
+document.getElementById('pipeline-select').addEventListener('change', async (e) => {
+  currentPid = e.target.value;
+  selectedId = null; statusMap = {}; viewRunId = 'latest';
+  await refreshAll();
+  setTimeout(fitView, 60);
+});
+
+async function newPipeline() {
+  const id = prompt('新流水线 ID（字母数字/下划线/短横线，如 etl_daily）：');
+  if (!id) return;
+  const name = prompt('流水线名称：', id.trim()) || id.trim();
+  const res = await api.createPipeline({ id: id.trim(), name: name.trim(), description: '' });
+  if (res && res.error) { alert(res.error); return; }
+  currentPid = res.id;
+  await loadPipelines(true);
+  await refreshAll();
+  setTimeout(fitView, 60);
+}
+document.getElementById('btn-new-pipe').onclick = newPipeline;
+document.getElementById('btn-new-pipe2').onclick = newPipeline;
+
+document.getElementById('btn-del-pipe').onclick = async () => {
+  const p = currentPipeline();
+  if (!p) return;
+  if (!confirm(`确认删除流水线「${p.name || p.id}」？该操作不可恢复。`)) return;
+  const res = await api.deletePipeline(currentPid);
+  if (res && res.error) { alert(res.error); return; }
+  currentPid = '';
+  await loadPipelines();
+  await refreshAll();
+};
+
+/* ============ 计划任务弹窗 ============ */
+const schedModal = document.getElementById('sched-modal');
+function syncSegUI() {
+  const type = document.querySelector('input[name="sctype"]:checked').value;
+  document.getElementById('seg-cron').classList.toggle('on', type === 'cron');
+  document.getElementById('seg-once').classList.toggle('on', type === 'once');
+  document.getElementById('sc-cron-wrap').style.display = type === 'cron' ? '' : 'none';
+  document.getElementById('sc-once-wrap').style.display = type === 'once' ? '' : 'none';
+}
+document.querySelectorAll('input[name="sctype"]').forEach(r => r.addEventListener('change', syncSegUI));
+document.querySelectorAll('#cron-presets span').forEach(s =>
+  s.addEventListener('click', () => { document.getElementById('sc-cron').value = s.dataset.c; }));
+
+document.getElementById('btn-sched').onclick = () => {
+  const p = currentPipeline();
+  if (!p) return;
+  const sch = p.schedule || { enabled: false, type: 'cron', cron: '*/5 * * * *', at: '' };
+  document.getElementById('sc-enabled').checked = !!sch.enabled;
+  const type = sch.type === 'once' ? 'once' : 'cron';
+  document.querySelector(`input[name="sctype"][value="${type}"]`).checked = true;
+  document.getElementById('sc-cron').value = sch.cron || '*/5 * * * *';
+  document.getElementById('sc-at').value = sch.at ? sch.at.replace(' ', 'T').slice(0, 16) : '';
+  syncSegUI();
+  schedModal.classList.add('show');
+};
+document.getElementById('sc-cancel').onclick = () => schedModal.classList.remove('show');
+schedModal.addEventListener('click', (e) => { if (e.target === schedModal) schedModal.classList.remove('show'); });
+document.getElementById('sc-save').onclick = async () => {
+  const type = document.querySelector('input[name="sctype"]:checked').value;
+  const sch = {
+    enabled: document.getElementById('sc-enabled').checked,
+    type,
+    cron: document.getElementById('sc-cron').value.trim(),
+    at: document.getElementById('sc-at').value.trim().replace('T', ' '),
+  };
+  if (sch.enabled && type === 'cron' && !sch.cron) { alert('请填写 cron 表达式'); return; }
+  if (sch.enabled && type === 'once' && !sch.at) { alert('请选择执行时间'); return; }
+  const res = await api.saveSchedule(sch);
+  if (res && res.error) { alert('保存失败：' + res.error); return; }
+  schedModal.classList.remove('show');
+  await loadPipelines(true);
+};
+
 /* ============ 加载与渲染 ============ */
 async function loadDAG() {
+  if (!currentPid) {
+    nodes = []; nodeById = {}; render();
+    document.getElementById('dag-name').textContent = 'DAG 工作流';
+    document.getElementById('dag-desc').textContent = '';
+    return;
+  }
   const info = await api.dag();
+  if (info && info.error) { return; }
   nodes = info.nodes || [];
   nodeById = {};
   nodes.forEach(n => nodeById[n.id] = n);
@@ -252,7 +445,6 @@ async function loadDAG() {
   render();
 }
 
-// 为缺少坐标(x=0,y=0)的节点按依赖层级自动排布
 function autoLayoutMissing(force) {
   const need = force ? nodes : nodes.filter(n => !n.x && !n.y);
   if (!need.length) return;
@@ -286,9 +478,7 @@ function nodeStatusClass(id) {
 }
 
 function render() {
-  // 移除旧节点（保留 svg）
   viewport.querySelectorAll('.node').forEach(e => e.remove());
-
   nodes.forEach(n => {
     const el = document.createElement('div');
     el.className = 'node' + (n.id === selectedId ? ' selected' : '') + (n.enabled ? '' : ' disabled') + nodeStatusClass(n.id);
@@ -315,7 +505,6 @@ function render() {
       </div>`;
     viewport.appendChild(el);
   });
-
   bindNodeEvents();
   drawEdges();
 }
@@ -353,19 +542,17 @@ function drawEdges() {
   });
 }
 
-/* ============ 节点交互（拖拽 / 端口连线 / 开关 / 选中） ============ */
+/* ============ 节点交互 ============ */
 function bindNodeEvents() {
-  // 选中 + 拖拽
   viewport.querySelectorAll('.node').forEach(el => {
     el.addEventListener('mousedown', (e) => {
-      if (e.target.dataset.port) return;          // 端口单独处理
-      if (e.target.closest('.switch')) return;     // 开关
+      if (e.target.dataset.port) return;
+      if (e.target.closest('.switch')) return;
       selectNode(el.dataset.id);
     });
     const handle = el.querySelector('[data-drag]');
     handle.addEventListener('mousedown', (e) => startNodeDrag(e, el.dataset.id));
   });
-  // 开关
   viewport.querySelectorAll('input[data-enable]').forEach(cb => {
     cb.addEventListener('change', async (e) => {
       e.stopPropagation();
@@ -374,7 +561,6 @@ function bindNodeEvents() {
       loadDAG();
     });
   });
-  // 端口连线
   viewport.querySelectorAll('.port.out').forEach(p => {
     p.addEventListener('mousedown', (e) => startConnect(e, p.dataset.id));
   });
@@ -458,7 +644,7 @@ function cssEsc(s){ return (window.CSS && CSS.escape) ? CSS.escape(s) : s.replac
 /* ============ 画布平移 / 缩放 ============ */
 let pan = null;
 canvas.addEventListener('mousedown', (e) => {
-  if (e.target.closest('.node') || e.target.closest('.zoom-ctl') || e.target.closest('.edge-path')) return;
+  if (e.target.closest('.node') || e.target.closest('.zoom-ctl') || e.target.closest('.edge-path') || e.target.closest('.empty-canvas')) return;
   pan = { sx: e.clientX, sy: e.clientY, ox: view.x, oy: view.y };
   canvas.classList.add('panning');
   if (e.target === canvas || e.target === viewport || e.target === edgesSvg) selectNode(null);
@@ -476,7 +662,6 @@ canvas.addEventListener('wheel', (e) => {
   const mx = e.clientX - r.left, my = e.clientY - r.top;
   const k0 = view.k;
   const k = Math.min(2.5, Math.max(0.25, k0 * (e.deltaY < 0 ? 1.1 : 0.9)));
-  // 以鼠标为锚点缩放
   view.x = mx - (mx - view.x) * (k / k0);
   view.y = my - (my - view.y) * (k / k0);
   view.k = k;
@@ -561,7 +746,6 @@ function renderInspector() {
       <button class="danger small" id="f-del">删除节点</button>
       <button id="f-save">保存</button>
     </div>`;
-
   form.querySelectorAll('.dep-chip[data-dep]').forEach(c =>
     c.addEventListener('click', () => c.classList.toggle('active')));
   document.getElementById('f-save').onclick = saveCurrent;
@@ -599,10 +783,10 @@ async function deleteCurrent() {
 
 /* 新增节点 */
 document.getElementById('btn-add').onclick = async () => {
+  if (!currentPid) return;
   const id = prompt('新节点 ID（唯一标识，如 task_a）：');
   if (!id) return;
   if (nodeById[id.trim()]) { alert('ID 已存在'); return; }
-  // 放置在当前视图中心
   const r = canvas.getBoundingClientRect();
   const center = toCanvas(r.left + r.width/2, r.top + r.height/2);
   const node = { id: id.trim(), name: id.trim(), type: 'shell', deps: [], command: 'echo hello',
@@ -616,13 +800,15 @@ document.getElementById('btn-add').onclick = async () => {
 
 /* DAG 名称 / 描述 */
 document.getElementById('dag-name').addEventListener('click', async () => {
+  if (!currentPid) return;
   const name = prompt('工作流名称：', document.getElementById('dag-name').textContent);
   if (name === null) return;
   const description = prompt('描述：', document.getElementById('dag-desc').textContent);
   if (description === null) return;
   const res = await api.saveMeta(name.trim(), description.trim());
   if (res && res.error) { alert(res.error); return; }
-  loadDAG();
+  await loadDAG();
+  await loadPipelines(true);
 });
 
 /* ============ 运行 / 日志 / 历史 ============ */
@@ -635,6 +821,7 @@ document.getElementById('btn-run').onclick = async () => {
 };
 
 async function refreshRun() {
+  if (!currentPid) return;
   const run = viewRunId === 'latest' ? await api.latest() : await api.runById(viewRunId);
   const box = document.getElementById('panel-logs');
   if (!run) { statusMap = {}; box.innerHTML = '<div class="panel-empty">暂无执行记录</div>'; render(); return; }
@@ -653,10 +840,11 @@ async function refreshRun() {
     </div>`;
   });
   box.innerHTML = html;
-  render(); // 更新节点状态着色
+  render();
 }
 
 async function refreshHistory() {
+  if (!currentPid) { document.getElementById('panel-history').innerHTML = '<div class="panel-empty">暂无历史</div>'; return; }
   const runs = await api.runs();
   const box = document.getElementById('panel-history');
   if (!runs.length) { box.innerHTML = '<div class="panel-empty">暂无历史</div>'; return; }
@@ -685,7 +873,7 @@ async function refreshAll() {
   await refreshHistory();
 }
 setInterval(() => {
-  if (document.getElementById('auto-refresh').checked && !drag && !conn && !pan) {
+  if (currentPid && document.getElementById('auto-refresh').checked && !drag && !conn && !pan && !schedModal.classList.contains('show')) {
     loadDAG().then(refreshRun);
   }
 }, 1800);
@@ -693,6 +881,7 @@ setInterval(() => {
 /* ============ 初始化 ============ */
 applyView();
 (async () => {
+  await loadPipelines();
   await refreshAll();
   setTimeout(fitView, 80);
 })();

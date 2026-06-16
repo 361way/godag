@@ -58,12 +58,40 @@ func (n *Node) SetEnabled(v bool) {
 	n.Enabled = &v
 }
 
+// ScheduleType 调度类型
+type ScheduleType string
+
+const (
+	// ScheduleOnce 一次性任务，在指定时间执行一次
+	ScheduleOnce ScheduleType = "once"
+	// ScheduleCron 周期性任务，按 crontab 表达式重复执行
+	ScheduleCron ScheduleType = "cron"
+)
+
+// Schedule 流水线的计划任务配置
+type Schedule struct {
+	// 是否启用调度
+	Enabled bool `json:"enabled" yaml:"enabled"`
+	// 调度类型：once（一次性）/ cron（周期性）
+	Type ScheduleType `json:"type" yaml:"type"`
+	// 周期性：5 字段 crontab 表达式（分 时 日 月 周）
+	Cron string `json:"cron" yaml:"cron,omitempty"`
+	// 一次性：执行时间，格式 "2006-01-02 15:04"
+	At string `json:"at" yaml:"at,omitempty"`
+	// 一次性任务是否已触发（内部状态，触发后置 true 不再执行）
+	Fired bool `json:"fired" yaml:"fired,omitempty"`
+}
+
 // DAGConfig DAG 定义，可由 YAML 或 JSON 反序列化得到
 type DAGConfig struct {
+	// 流水线唯一标识（多流水线场景下使用，同时作为持久化文件名）
+	ID string `json:"id" yaml:"id,omitempty"`
 	// DAG 名称
 	Name string `json:"name" yaml:"name"`
 	// 描述
 	Description string `json:"description" yaml:"description"`
+	// 计划任务配置（可选）
+	Schedule *Schedule `json:"schedule" yaml:"schedule,omitempty"`
 	// 任务节点列表
 	Nodes []*Node `json:"nodes" yaml:"nodes"`
 }
