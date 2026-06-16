@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DAG 任务调度管理</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: #0f172a; color: #e2e8f0; line-height: 1.5;
+  }
+  header {
+    background: #1e293b; padding: 16px 24px; display: flex;
+    align-items: center; justify-content: space-between;
+    border-bottom: 1px solid #334155;
+  }
+  header h1 { font-size: 18px; font-weight: 600; cursor: pointer; }
+  header .desc { color: #94a3b8; font-size: 13px; margin-top: 2px; }
+  .container { padding: 24px; max-width: 1280px; margin: 0 auto; }
+  .toolbar { display: flex; gap: 12px; align-items: center; margin-bottom: 20px; flex-wrap: wrap; }
+  button {
+    background: #3b82f6; color: #fff; border: none; padding: 8px 16px;
+    border-radius: 6px; cursor: pointer; font-size: 14px; transition: .15s;
+  }
+  button:hover { background: #2563eb; }
+  button:disabled { background: #475569; cursor: not-allowed; }
+  button.ghost { background: #334155; }
+  button.ghost:hover { background: #475569; }
+  button.danger { background: #b91c1c; }
+  button.danger:hover { background: #991b1b; }
+  button.small { padding: 4px 10px; font-size: 12px; }
+  .status-pill { padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+  .card {
+    background: #1e293b; border: 1px solid #334155; border-radius: 10px;
+    padding: 16px; margin-bottom: 16px;
+  }
+  .card h2 { font-size: 15px; margin-bottom: 12px; color: #cbd5e1; display:flex; justify-content:space-between; align-items:center; }
+  .node {
+    border: 1px solid #334155; border-radius: 8px; padding: 12px;
+    margin-bottom: 10px; background: #0f172a;
+  }
+  .node-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .node-title { font-weight: 600; font-size: 14px; }
+  .node-meta { color: #94a3b8; font-size: 12px; margin-top: 4px; word-break: break-all; }
+  .badge { display: inline-block; padding: 1px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; margin-right: 6px; }
+  .badge.shell { background: #166534; color: #bbf7d0; }
+  .badge.golang { background: #155e75; color: #a5f3fc; }
+  .badge.python { background: #854d0e; color: #fde68a; }
+  .st-pending { background: #475569; color: #e2e8f0; }
+  .st-running { background: #1d4ed8; color: #dbeafe; }
+  .st-success { background: #15803d; color: #dcfce7; }
+  .st-failed  { background: #b91c1c; color: #fee2e2; }
+  .st-skipped { background: #57534e; color: #e7e5e4; }
+  .switch { position: relative; display: inline-block; width: 42px; height: 22px; flex-shrink:0; }
+  .switch input { opacity: 0; width: 0; height: 0; }
+  .slider { position: absolute; cursor: pointer; inset: 0; background: #475569; border-radius: 999px; transition: .2s; }
+  .slider:before { content: ""; position: absolute; height: 16px; width: 16px; left: 3px; bottom: 3px; background: #fff; border-radius: 50%; transition: .2s; }
+  input:checked + .slider { background: #22c55e; }
+  input:checked + .slider:before { transform: translateX(20px); }
+  pre { background: #020617; padding: 8px; border-radius: 6px; font-size: 12px; overflow-x: auto; margin-top: 6px; color: #cbd5e1; max-height: 200px; }
+  .muted { color: #64748b; font-size: 12px; }
+  .row { display: flex; align-items: center; gap: 8px; }
+  .actions { display: flex; gap: 6px; }
+  /* 模态框 */
+  .modal-mask {
+    position: fixed; inset: 0; background: rgba(0,0,0,.6); display: none;
+    align-items: flex-start; justify-content: center; padding: 40px 16px; overflow-y: auto; z-index: 50;
+  }
+  .modal-mask.open { display: flex; }
+  .modal {
+    background: #1e293b; border: 1px solid #334155; border-radius: 12px;
+    width: 100%; max-width: 560px; padding: 20px;
+  }
+  .modal h3 { font-size: 16px; margin-bottom: 16px; }
+  .field { margin-bottom: 14px; }
+  .field label { display: block; font-size: 13px; color: #94a3b8; margin-bottom: 4px; }
+  .field input, .field select, .field textarea {
+    width: 100%; background: #0f172a; border: 1px solid #334155; color: #e2e8f0;
+    padding: 8px 10px; border-radius: 6px; font-size: 13px; font-family: inherit;
+  }
+  .field textarea { min-height: 70px; resize: vertical; }
+  .field .hint { font-size: 11px; color: #64748b; margin-top: 3px; }
+  .deps-box { display: flex; flex-wrap: wrap; gap: 6px; }
+  .dep-chip { display: inline-flex; align-items: center; gap: 4px; background: #0f172a; border: 1px solid #334155; padding: 4px 8px; border-radius: 6px; font-size: 12px; cursor: pointer; }
+  .dep-chip.active { background: #1d4ed8; border-color: #3b82f6; color: #fff; }
+  .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1 id="dag-name" title="点击编辑名称/描述">DAG 任务调度</h1>
+    <div class="desc" id="dag-desc"></div>
+  </div>
+  <div class="row">
+    <span class="status-pill st-pending" id="global-status">就绪</span>
+  </div>
+</header>
+
+<div class="container">
+  <div class="toolbar">
+    <button id="btn-run">▶ 触发执行</button>
+    <button id="btn-add">＋ 新增任务</button>
+    <button class="ghost" id="btn-refresh">⟳ 刷新</button>
+    <label class="row muted"><input type="checkbox" id="auto-refresh" checked> 自动刷新</label>
+  </div>
+
+  <div class="grid">
+    <div>
+      <div class="card">
+        <h2>任务节点 <span class="muted" id="node-count"></span></h2>
+        <div id="nodes"></div>
+      </div>
+    </div>
+    <div>
+      <div class="card">
+        <h2>最近执行</h2>
+        <div id="run-detail"><span class="muted">暂无执行记录</span></div>
+      </div>
+      <div class="card">
+        <h2>执行历史</h2>
+        <div id="run-history"><span class="muted">暂无</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 节点编辑模态框 -->
+<div class="modal-mask" id="modal">
+  <div class="modal">
+    <h3 id="modal-title">新增任务</h3>
+    <div class="field">
+      <label>节点 ID（唯一标识，保存后不建议修改）</label>
+      <input id="f-id" placeholder="如 task_a">
+    </div>
+    <div class="field">
+      <label>名称</label>
+      <input id="f-name" placeholder="任务显示名称">
+    </div>
+    <div class="field">
+      <label>类型</label>
+      <select id="f-type">
+        <option value="shell">shell（命令行）</option>
+        <option value="python">python（脚本）</option>
+        <option value="golang">golang（go run）</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>依赖的上游任务（工作流：选中的任务全部完成后才会执行本任务）</label>
+      <div class="deps-box" id="f-deps"></div>
+      <div class="hint">下游可通过环境变量读取上游输出：<code>$DAG_UPSTREAM_OUTPUT</code>（全部上游 stdout 合并），或 <code>$DAG_DEP_&lt;上游ID大写&gt;_OUTPUT</code>（指定上游 stdout）。</div>
+    </div>
+    <div class="field">
+      <label>命令 / 脚本路径（command）</label>
+      <input id="f-command" placeholder="shell 命令、py/go 文件路径">
+    </div>
+    <div class="field">
+      <label>内联脚本内容（script，可选，留空则用上面的命令）</label>
+      <textarea id="f-script" placeholder="直接粘贴脚本内容，将写入临时文件执行"></textarea>
+    </div>
+    <div class="field">
+      <label>参数（args，每行一个，可选）</label>
+      <textarea id="f-args" placeholder="--flag&#10;value"></textarea>
+    </div>
+    <div class="field">
+      <label>工作目录（workdir，可选）</label>
+      <input id="f-workdir" placeholder="/path/to/dir">
+    </div>
+    <div class="field">
+      <label>环境变量（env，每行一个 KEY=VALUE，可选）</label>
+      <textarea id="f-env" placeholder="FOO=bar"></textarea>
+    </div>
+    <div class="field">
+      <label>超时（秒，0 表示不限制）</label>
+      <input id="f-timeout" type="number" value="0" min="0">
+    </div>
+    <div class="modal-actions">
+      <button class="ghost" id="modal-cancel">取消</button>
+      <button id="modal-save">保存</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const api = {
+  dag:    () => fetch('/api/dag').then(r => r.json()),
+  run:    () => fetch('/api/run', { method: 'POST' }).then(r => r.json()),
+  runs:   () => fetch('/api/runs').then(r => r.json()),
+  latest: () => fetch('/api/run/latest').then(r => r.ok ? r.json() : null),
+  enable: (id, enabled) => post('/api/node/enable', { id, enabled }),
+  saveNode: (node) => post('/api/node/save', node),
+  deleteNode: (id) => post('/api/node/delete', { id }),
+  saveMeta: (name, description) => post('/api/dag/meta', { name, description }),
+};
+function post(url, body) {
+  return fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) }).then(r => r.json());
+}
+
+function statusClass(s) { return 'st-' + (s || 'pending'); }
+function statusText(s) {
+  return { pending:'等待', running:'执行中', success:'成功', failed:'失败', skipped:'跳过' }[s] || s;
+}
+
+let nodeStatusMap = {};
+let currentNodes = [];   // 当前 DAG 全部节点
+let editingId = null;    // 正在编辑的节点 ID，null 表示新增
+
+async function loadDAG() {
+  const info = await api.dag();
+  currentNodes = info.nodes || [];
+  document.getElementById('dag-name').textContent = info.name || 'DAG 任务调度';
+  document.getElementById('dag-desc').textContent = info.description || '';
+  document.getElementById('node-count').textContent = `共 ${currentNodes.length} 个`;
+  const gs = document.getElementById('global-status');
+  gs.textContent = info.running ? '执行中' : '就绪';
+  gs.className = 'status-pill ' + (info.running ? 'st-running' : 'st-pending');
+  document.getElementById('btn-run').disabled = info.running;
+  document.getElementById('btn-add').disabled = info.running;
+
+  const box = document.getElementById('nodes');
+  box.innerHTML = '';
+  if (!currentNodes.length) {
+    box.innerHTML = '<span class="muted">暂无任务，点击「新增任务」开始配置</span>';
+    return;
+  }
+  currentNodes.forEach(n => {
+    const st = nodeStatusMap[n.id] || 'pending';
+    const div = document.createElement('div');
+    div.className = 'node';
+    div.innerHTML = `
+      <div class="node-head">
+        <div>
+          <span class="node-title">${escapeHtml(n.name || n.id)}</span>
+          <span class="badge ${n.type}">${n.type}</span>
+          <span class="badge ${statusClass(st)}">${statusText(st)}</span>
+        </div>
+        <div class="row">
+          <label class="switch">
+            <input type="checkbox" ${n.enabled ? 'checked' : ''} data-enable="${n.id}">
+            <span class="slider"></span>
+          </label>
+        </div>
+      </div>
+      <div class="node-meta">ID: ${escapeHtml(n.id)} ${n.deps && n.deps.length ? ' · 依赖: ' + n.deps.map(escapeHtml).join(', ') : ' · 无依赖'}</div>
+      <div class="node-meta" style="color:#64748b">${escapeHtml((n.command||n.script||'').slice(0,90))}</div>
+      <div class="actions" style="margin-top:8px">
+        <button class="ghost small" data-edit="${n.id}">编辑</button>
+        <button class="danger small" data-del="${n.id}">删除</button>
+      </div>
+    `;
+    box.appendChild(div);
+  });
+
+  box.querySelectorAll('input[data-enable]').forEach(cb => {
+    cb.addEventListener('change', async (e) => {
+      const res = await api.enable(e.target.dataset.enable, e.target.checked);
+      if (res && res.error) alert(res.error);
+      loadDAG();
+    });
+  });
+  box.querySelectorAll('button[data-edit]').forEach(b => {
+    b.addEventListener('click', () => openModal(b.dataset.edit));
+  });
+  box.querySelectorAll('button[data-del]').forEach(b => {
+    b.addEventListener('click', async () => {
+      if (!confirm(`确认删除任务「${b.dataset.del}」？`)) return;
+      const res = await api.deleteNode(b.dataset.del);
+      if (res && res.error) { alert(res.error); return; }
+      loadDAG();
+    });
+  });
+}
+
+/* ---------- 模态框逻辑 ---------- */
+const modal = document.getElementById('modal');
+
+function renderDepChips(selected) {
+  const box = document.getElementById('f-deps');
+  box.innerHTML = '';
+  const others = currentNodes.filter(n => n.id !== editingId);
+  if (!others.length) { box.innerHTML = '<span class="muted">暂无其它任务可作为上游</span>'; return; }
+  others.forEach(n => {
+    const chip = document.createElement('span');
+    chip.className = 'dep-chip' + (selected.includes(n.id) ? ' active' : '');
+    chip.textContent = n.name ? `${n.name} (${n.id})` : n.id;
+    chip.dataset.dep = n.id;
+    chip.addEventListener('click', () => {
+      chip.classList.toggle('active');
+    });
+    box.appendChild(chip);
+  });
+}
+
+function openModal(id) {
+  editingId = id || null;
+  document.getElementById('modal-title').textContent = id ? '编辑任务' : '新增任务';
+  const n = id ? currentNodes.find(x => x.id === id) : null;
+  document.getElementById('f-id').value = n ? n.id : '';
+  document.getElementById('f-id').disabled = !!id;
+  document.getElementById('f-name').value = n ? (n.name || '') : '';
+  document.getElementById('f-type').value = n ? n.type : 'shell';
+  document.getElementById('f-command').value = n ? (n.command || '') : '';
+  document.getElementById('f-script').value = n ? (n.script || '') : '';
+  document.getElementById('f-args').value = n && n.args ? n.args.join('\n') : '';
+  document.getElementById('f-workdir').value = n ? (n.workdir || '') : '';
+  document.getElementById('f-env').value = n && n.env ? n.env.join('\n') : '';
+  document.getElementById('f-timeout').value = n ? (n.timeout_sec || 0) : 0;
+  renderDepChips(n && n.deps ? n.deps : []);
+  modal.classList.add('open');
+}
+function closeModal() { modal.classList.remove('open'); }
+
+function linesToArr(text) {
+  return text.split('\n').map(s => s.trim()).filter(s => s.length > 0);
+}
+
+document.getElementById('modal-save').addEventListener('click', async () => {
+  const id = document.getElementById('f-id').value.trim();
+  if (!id) { alert('请填写节点 ID'); return; }
+  const deps = Array.from(document.querySelectorAll('#f-deps .dep-chip.active')).map(c => c.dataset.dep);
+  const node = {
+    id,
+    name: document.getElementById('f-name').value.trim(),
+    type: document.getElementById('f-type').value,
+    deps,
+    command: document.getElementById('f-command').value.trim(),
+    script: document.getElementById('f-script').value,
+    args: linesToArr(document.getElementById('f-args').value),
+    workdir: document.getElementById('f-workdir').value.trim(),
+    env: linesToArr(document.getElementById('f-env').value),
+    timeout_sec: parseInt(document.getElementById('f-timeout').value, 10) || 0,
+  };
+  const res = await api.saveNode(node);
+  if (res && res.error) { alert('保存失败: ' + res.error); return; }
+  closeModal();
+  loadDAG();
+});
+document.getElementById('modal-cancel').addEventListener('click', closeModal);
+modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
+document.getElementById('btn-add').addEventListener('click', () => openModal(null));
+
+/* DAG 名称/描述编辑 */
+document.getElementById('dag-name').addEventListener('click', async () => {
+  const name = prompt('DAG 名称：', document.getElementById('dag-name').textContent);
+  if (name === null) return;
+  const description = prompt('DAG 描述：', document.getElementById('dag-desc').textContent);
+  if (description === null) return;
+  const res = await api.saveMeta(name.trim(), description.trim());
+  if (res && res.error) { alert(res.error); return; }
+  loadDAG();
+});
+
+/* ---------- 执行结果 ---------- */
+async function loadLatest() {
+  const run = await api.latest();
+  const box = document.getElementById('run-detail');
+  if (!run) { box.innerHTML = '<span class="muted">暂无执行记录</span>'; return; }
+  nodeStatusMap = {};
+  let html = `<div class="muted">运行 ID: ${run.id} · ${run.finished ? '已完成' : '进行中'}</div>`;
+  Object.values(run.nodes).forEach(nr => {
+    nodeStatusMap[nr.id] = nr.status;
+    html += `
+      <div class="node">
+        <div class="node-head">
+          <span class="node-title">${escapeHtml(nr.name || nr.id)}</span>
+          <span class="badge ${statusClass(nr.status)}">${statusText(nr.status)}</span>
+        </div>
+        ${nr.stdout ? `<pre>${escapeHtml(nr.stdout)}</pre>` : ''}
+        ${nr.stderr ? `<pre style="color:#fca5a5">${escapeHtml(nr.stderr)}</pre>` : ''}
+        ${nr.error ? `<div class="muted" style="color:#fca5a5">错误: ${escapeHtml(nr.error)}</div>` : ''}
+      </div>`;
+  });
+  box.innerHTML = html;
+}
+
+async function loadHistory() {
+  const runs = await api.runs();
+  const box = document.getElementById('run-history');
+  if (!runs.length) { box.innerHTML = '<span class="muted">暂无</span>'; return; }
+  box.innerHTML = runs.map(r =>
+    `<div class="node-meta">${r.id} · ${r.finished ? '已完成' : '进行中'}</div>`
+  ).join('');
+}
+
+function escapeHtml(s) {
+  return (s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+async function refreshAll() {
+  await loadLatest();
+  await loadDAG();
+  await loadHistory();
+}
+
+document.getElementById('btn-run').addEventListener('click', async () => {
+  const res = await api.run();
+  if (res.error) { alert(res.error); return; }
+  setTimeout(refreshAll, 300);
+});
+document.getElementById('btn-refresh').addEventListener('click', refreshAll);
+
+setInterval(() => {
+  // 模态框打开时不自动刷新，避免打断编辑
+  if (!modal.classList.contains('open') && document.getElementById('auto-refresh').checked) refreshAll();
+}, 1500);
+
+refreshAll();
+</script>
+</body>
+</html>

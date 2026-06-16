@@ -1,0 +1,64 @@
+{
+  "name": "JSON 格式示例流水线",
+  "description": "演示通过 JSON 定义任务节点",
+  "nodes": [
+    {
+      "id": "build",
+      "name": "编译",
+      "type": "shell",
+      "deps": null,
+      "enabled": false,
+      "command": "echo '开始编译' \u0026\u0026 sleep 1 \u0026\u0026 echo '编译完成'",
+      "script": "",
+      "args": null,
+      "workdir": "",
+      "env": null,
+      "timeout_sec": 0
+    },
+    {
+      "id": "test",
+      "name": "测试",
+      "type": "shell",
+      "deps": [
+        "build"
+      ],
+      "enabled": false,
+      "command": "echo '运行测试套件...' \u0026\u0026 echo '全部通过'",
+      "script": "",
+      "args": null,
+      "workdir": "",
+      "env": null,
+      "timeout_sec": 0
+    },
+    {
+      "id": "deploy",
+      "name": "部署",
+      "type": "shell",
+      "deps": [
+        "test"
+      ],
+      "enabled": false,
+      "command": "echo '部署到目标环境'",
+      "script": "",
+      "args": null,
+      "workdir": "",
+      "env": null,
+      "timeout_sec": 0
+    },
+    {
+      "id": "getstrong",
+      "name": "强力测试",
+      "type": "shell",
+      "deps": [
+        "test"
+      ],
+      "enabled": true,
+      "command": "./Users/jerry/CodeBuddy/test/iwencai",
+      "script": "",
+      "args": [],
+      "workdir": "",
+      "env": [],
+      "timeout_sec": 0
+    }
+  ]
+}

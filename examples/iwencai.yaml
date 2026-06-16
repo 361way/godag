@@ -1,0 +1,14 @@
+name: iwencai 数据采集
+description: 执行 iwencai 金融数据查询程序
+nodes:
+    - id: run_iwencai
+      name: 运行 iwencai 查询
+      type: shell
+      deps: []
+      enabled: null
+      command: /Users/jerry/CodeBuddy/test/iwencai
+      script: ""
+      args: []
+      workdir: /Users/jerry/CodeBuddy/test
+      env: []
+      timeout_sec: 120

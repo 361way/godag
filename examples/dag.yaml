@@ -1,0 +1,56 @@
+name: 数据处理流水线示例
+description: 演示 shell / python / golang 三类任务节点及依赖关系
+
+nodes:
+  - id: start
+    name: 初始化
+    type: shell
+    command: "echo '流水线开始' && date"
+
+  - id: fetch_data
+    name: 拉取数据
+    type: shell
+    deps: [start]
+    command: "echo '正在拉取数据...' && sleep 1 && echo '数据拉取完成'"
+
+  - id: py_process
+    name: Python 数据处理
+    type: python
+    deps: [fetch_data]
+    timeout_sec: 30
+    script: |
+      import time
+      print("Python 开始处理数据")
+      total = sum(range(100))
+      print(f"处理结果: {total}")
+
+  - id: go_analyze
+    name: Golang 分析
+    type: golang
+    deps: [fetch_data]
+    script: |
+      package main
+
+      import "fmt"
+
+      func main() {
+          fmt.Println("Golang 分析任务执行中")
+          sum := 0
+          for i := 1; i <= 10; i++ {
+              sum += i
+          }
+          fmt.Printf("分析结果: %d\n", sum)
+      }
+
+  - id: report
+    name: 生成报告
+    type: shell
+    deps: [py_process, go_analyze]
+    command: "echo '汇总 Python 与 Golang 结果，生成最终报告'"
+
+  - id: notify
+    name: 通知（默认禁用）
+    type: shell
+    deps: [report]
+    enabled: false
+    command: "echo '发送通知（此节点默认关闭，可在界面开启）'"
