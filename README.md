@@ -11,7 +11,12 @@
   - 启动参数 `-disable` 指定禁用节点
   - Web 界面开关实时切换
 - **级联跳过**：被禁用或上游失败的节点，其下游节点自动跳过
-- **Web 管理界面**：任务节点可视化、状态实时刷新、一键触发执行、查看执行历史与日志输出
+- **N8N 风格可视化画布**：
+  - 节点以卡片形式呈现在画布上，可自由拖拽移动，布局自动持久化
+  - 从节点右侧端点拖拽到另一节点左侧端点即可建立依赖连线，点击连线可删除依赖
+  - 画布支持平移（拖拽空白处）、滚轮缩放、一键「适应视图」与「自动布局」
+  - 执行时节点边框 / 状态徽标实时着色（等待 / 执行中 / 成功 / 失败 / 跳过）
+- **侧边检视面板**：选中节点即可在右侧编辑全部字段、查看运行日志与执行历史
 - **双格式配置**：支持 YAML 与 JSON 定义任务
 - **两种运行模式**：Web 服务模式 / 命令行一次性执行模式
 
@@ -54,6 +59,18 @@ go build -o dag-app .
 
 然后浏览器访问 http://127.0.0.1:8080
 
+### 启用访问鉴权（可选）
+
+管理界面支持 HTTP Basic 鉴权，账号密码通过环境变量配置，两者均未设置时不启用鉴权（便于本地调试）：
+
+```bash
+export DAG_AUTH_USER=admin
+export DAG_AUTH_PASS=your-strong-password
+./dag-app -config examples/dag.yaml -addr 0.0.0.0:8080
+```
+
+启用后访问页面或任意 `/api/*` 接口都需要提供凭证，否则返回 `401`。建议在对外暴露端口时务必配置。
+
 ### 命令行一次性执行
 
 ```bash
@@ -87,6 +104,7 @@ go build -o dag-app .
 | `workdir` | string | 工作目录 |
 | `env` | []string | 额外环境变量（`KEY=VALUE`） |
 | `timeout_sec` | int | 超时时间（秒），0 表示不限制 |
+| `x` / `y` | float | 节点在可视化画布中的坐标（拖拽后自动持久化，无需手填） |
 
 ### YAML 示例
 
@@ -117,6 +135,10 @@ nodes:
 | GET | `/api/runs` | 获取执行历史列表 |
 | GET | `/api/run/{id}` | 获取指定执行详情（`latest` 表示最近一次） |
 | POST | `/api/node/enable` | 启用/禁用节点，body：`{"id":"node1","enabled":true}` |
+| POST | `/api/node/save` | 新增/更新节点（按 id 区分），body 为完整节点对象 |
+| POST | `/api/node/delete` | 删除节点，body：`{"id":"node1"}` |
+| POST | `/api/node/position` | 更新节点画布坐标，body：`{"id":"node1","x":120,"y":80}` |
+| POST | `/api/dag/meta` | 更新工作流名称与描述，body：`{"name":"...","description":"..."}` |
 
 ## 安全提示
 

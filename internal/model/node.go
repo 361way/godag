@@ -39,6 +39,10 @@ type Node struct {
 	Env []string `json:"env" yaml:"env"`
 	// 超时时间（秒），0 表示不超时
 	TimeoutSec int `json:"timeout_sec" yaml:"timeout_sec"`
+
+	// 画布坐标（用于 N8N 风格可视化编辑器，持久化节点布局）
+	X float64 `json:"x" yaml:"x,omitempty"`
+	Y float64 `json:"y" yaml:"y,omitempty"`
 }
 
 // IsEnabled 返回节点是否启用（默认启用）

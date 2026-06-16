@@ -75,9 +75,22 @@ func main() {
 
 	// 启动 Web 服务
 	srv := web.NewServer(mgr)
+
+	// 最简单的鉴权：HTTP Basic Auth，账号密码经环境变量配置
+	//   DAG_AUTH_USER / DAG_AUTH_PASS
+	// 两者均未设置时不启用鉴权（便于本地调试）。
+	authUser := os.Getenv("DAG_AUTH_USER")
+	authPass := os.Getenv("DAG_AUTH_PASS")
+	handler := web.BasicAuth(srv.Handler(), authUser, authPass)
+	if authUser != "" || authPass != "" {
+		log.Printf("已启用 Basic 鉴权（用户: %s）", authUser)
+	} else {
+		log.Printf("警告: 未配置 DAG_AUTH_USER/DAG_AUTH_PASS，管理界面未启用鉴权")
+	}
+
 	httpServer := &http.Server{
 		Addr:    *addr,
-		Handler: srv.Handler(),
+		Handler: handler,
 	}
 
 	go func() {

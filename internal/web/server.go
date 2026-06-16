@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"crypto/subtle"
 	"embed"
 	"encoding/json"
 	"io/fs"
@@ -41,8 +42,29 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/node/enable", s.handleNodeEnable)
 	mux.HandleFunc("/api/node/save", s.handleNodeSave)
 	mux.HandleFunc("/api/node/delete", s.handleNodeDelete)
+	mux.HandleFunc("/api/node/position", s.handleNodePosition)
 
 	return mux
+}
+
+// BasicAuth 为传入的 handler 包装一层 HTTP Basic 鉴权。
+// 当 user 与 pass 均为空时表示未配置鉴权，直接放行（便于本地调试）。
+func BasicAuth(next http.Handler, user, pass string) http.Handler {
+	if user == "" && pass == "" {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		u, p, ok := r.BasicAuth()
+		// 使用恒定时间比较，避免时序侧信道攻击
+		userOK := subtle.ConstantTimeCompare([]byte(u), []byte(user)) == 1
+		passOK := subtle.ConstantTimeCompare([]byte(p), []byte(pass)) == 1
+		if !ok || !userOK || !passOK {
+			w.Header().Set("WWW-Authenticate", `Basic realm="DAG 管理界面", charset="UTF-8"`)
+			http.Error(w, "未授权", http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func writeJSON(w http.ResponseWriter, code int, v interface{}) {
@@ -165,8 +187,30 @@ func (s *Server) handleNodeDelete(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
+// POST /api/node/position 更新节点画布坐标
+// body: {"id": "node1", "x": 100, "y": 200}
+func (s *Server) handleNodePosition(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, http.StatusMethodNotAllowed, "仅支持 POST")
+		return
+	}
+	var req struct {
+		ID string  `json:"id"`
+		X  float64 `json:"x"`
+		Y  float64 `json:"y"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "请求体解析失败")
+		return
+	}
+	if err := s.mgr.SetNodePosition(req.ID, req.X, req.Y); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
 // POST /api/dag/meta 更新 DAG 名称与描述
-// body: {"name": "...", "description": "..."}
 func (s *Server) handleDAGMeta(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeErr(w, http.StatusMethodNotAllowed, "仅支持 POST")

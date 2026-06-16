@@ -62,6 +62,8 @@ type NodeView struct {
 	WorkDir    string         `json:"workdir"`
 	Env        []string       `json:"env"`
 	TimeoutSec int            `json:"timeout_sec"`
+	X          float64        `json:"x"`
+	Y          float64        `json:"y"`
 }
 
 // GetInfo 返回当前 DAG 信息
@@ -83,6 +85,8 @@ func (m *Manager) GetInfo() *Info {
 			WorkDir:    n.WorkDir,
 			Env:        n.Env,
 			TimeoutSec: n.TimeoutSec,
+			X:          n.X,
+			Y:          n.Y,
 		})
 	}
 	topo, _ := m.dag.TopoOrder()
@@ -111,6 +115,27 @@ func (m *Manager) SetNodeEnabled(id string, enabled bool) error {
 			n.SetEnabled(enabled)
 			break
 		}
+	}
+	return m.persistLocked()
+}
+
+// SetNodePosition 更新节点在画布上的坐标并持久化（不触发 DAG 重建，供拖拽使用）
+func (m *Manager) SetNodePosition(id string, x, y float64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	found := false
+	for _, n := range m.cfg.Nodes {
+		if n.ID == id {
+			n.X, n.Y = x, y
+			found = true
+			break
+		}
+	}
+	if !found {
+		return fmt.Errorf("节点不存在: %s", id)
+	}
+	if node, ok := m.dag.Nodes[id]; ok {
+		node.X, node.Y = x, y
 	}
 	return m.persistLocked()
 }
