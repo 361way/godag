@@ -38,11 +38,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/pipeline/create", s.handlePipelineCreate)
 	mux.HandleFunc("/api/pipeline/delete", s.handlePipelineDelete)
 	mux.HandleFunc("/api/pipeline/schedule", s.handleSchedule)
+	mux.HandleFunc("/api/sink", s.handleSink)
 
 	// 单流水线内的操作（通过 ?pipeline=<id> 指定，缺省取第一个）
 	mux.HandleFunc("/api/dag", s.handleDAG)
 	mux.HandleFunc("/api/dag/meta", s.handleDAGMeta)
 	mux.HandleFunc("/api/run", s.handleRun)
+	mux.HandleFunc("/api/run/stop", s.handleRunStop)
 	mux.HandleFunc("/api/runs", s.handleRuns)
 	mux.HandleFunc("/api/run/", s.handleRunDetail)
 	mux.HandleFunc("/api/node/enable", s.handleNodeEnable)
@@ -84,7 +86,6 @@ func writeErr(w http.ResponseWriter, code int, msg string) {
 }
 
 /* ========================= 流水线管理 ========================= */
-
 // pipelineSummary 流水线列表的精简视图
 type pipelineSummary struct {
 	ID          string          `json:"id"`
@@ -180,6 +181,15 @@ func (s *Server) handleSchedule(w http.ResponseWriter, r *http.Request) {
 
 /* ========================= 单流水线内操作 ========================= */
 
+// GET /api/sink 返回当前运行记录持久化后端信息
+func (s *Server) handleSink(w http.ResponseWriter, r *http.Request) {
+	name, persistent := s.store.SinkInfo()
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"name":       name,
+		"persistent": persistent,
+	})
+}
+
 // GET /api/dag?pipeline=<id> 返回 DAG 结构与节点状态
 func (s *Server) handleDAG(w http.ResponseWriter, r *http.Request) {
 	m, err := s.store.Get(r.URL.Query().Get("pipeline"))
@@ -207,6 +217,24 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"run_id": run.ID})
+}
+
+// POST /api/run/stop?pipeline=<id> 强制停止当前正在执行的任务
+func (s *Server) handleRunStop(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, http.StatusMethodNotAllowed, "仅支持 POST")
+		return
+	}
+	m, err := s.store.Get(r.URL.Query().Get("pipeline"))
+	if err != nil {
+		writeErr(w, http.StatusNotFound, err.Error())
+		return
+	}
+	if err := m.ForceStop(); err != nil {
+		writeErr(w, http.StatusConflict, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 // GET /api/runs?pipeline=<id> 返回执行历史

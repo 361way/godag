@@ -16,6 +16,7 @@ import (
 	"dag-app/internal/dag"
 	"dag-app/internal/engine"
 	"dag-app/internal/scheduler"
+	"dag-app/internal/sink"
 	"dag-app/internal/store"
 	"dag-app/internal/web"
 )
@@ -28,6 +29,8 @@ func main() {
 		maxParallel = flag.Int("parallel", 4, "最大并发执行节点数，<=0 表示不限制")
 		disable     = flag.String("disable", "", "启动时禁用的节点 ID 列表，逗号分隔（仅 CLI 模式）")
 		runOnce     = flag.Bool("run", false, "命令行模式：直接执行一次 -config 指定的 DAG 后退出")
+		sinkPlugin  = flag.String("sink-plugin", "", "运行记录持久化插件 .so 路径（留空则仅内存，重启丢失）")
+		sinkConfig  = flag.String("sink-config", "", "插件配置，逗号分隔的 k=v，如 path=runs.db 或 endpoint=...,bucket=...")
 	)
 	flag.Parse()
 
@@ -69,6 +72,19 @@ func main() {
 		}
 	}
 	log.Printf("已加载 %d 条流水线（目录: %s）", st.Count(), *dataDir)
+
+	// 运行记录持久化插件（可选，通过 Go plugin 动态加载 .so）
+	if *sinkPlugin != "" {
+		sk, lerr := sink.Load(*sinkPlugin, sink.ParseConfig(*sinkConfig))
+		if lerr != nil {
+			log.Fatalf("加载持久化插件失败: %v", lerr)
+		}
+		st.SetSink(sk)
+		defer func() { _ = sk.Close() }()
+		log.Printf("已启用运行记录持久化后端: %s（插件: %s）", sk.Name(), *sinkPlugin)
+	} else {
+		log.Printf("未配置 -sink-plugin，运行记录仅保存在内存中（重启丢失）")
+	}
 
 	// 启动计划任务调度器
 	sch := scheduler.New(st)

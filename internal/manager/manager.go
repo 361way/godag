@@ -3,6 +3,7 @@ package manager
 import (
 	"context"
 	"fmt"
+	"log"
 	"sort"
 	"sync"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"dag-app/internal/dag"
 	"dag-app/internal/engine"
 	"dag-app/internal/model"
+	"dag-app/internal/sink"
 )
 
 // Manager 统筹 DAG、节点启停状态与执行历史
@@ -21,8 +23,10 @@ type Manager struct {
 	maxParallel int
 	configPath  string // 配置文件路径，用于持久化；为空时不写盘
 
-	runs    []*engine.Run // 执行历史（最新在前）
-	running bool          // 是否有正在进行的执行
+	runs      []*engine.Run      // 执行历史（最新在前）
+	running   bool               // 是否有正在进行的执行
+	cancelRun context.CancelFunc // 取消当前正在执行的 run（用于手动停止）
+	sink      sink.Sink          // 运行记录持久化后端（可选，nil 表示仅内存）
 }
 
 // New 基于配置创建 Manager。configPath 用于将界面修改持久化回配置文件，可为空。
@@ -64,6 +68,7 @@ type NodeView struct {
 	WorkDir    string         `json:"workdir"`
 	Env        []string       `json:"env"`
 	TimeoutSec int            `json:"timeout_sec"`
+	PythonBin  string         `json:"python_bin"`
 	X          float64        `json:"x"`
 	Y          float64        `json:"y"`
 }
@@ -87,8 +92,9 @@ func (m *Manager) GetInfo() *Info {
 			WorkDir:    n.WorkDir,
 			Env:        n.Env,
 			TimeoutSec: n.TimeoutSec,
-			X:          n.X,
-			Y:          n.Y,
+		PythonBin:  n.PythonBin,
+		X:          n.X,
+		Y:          n.Y,
 		})
 	}
 	topo, _ := m.dag.TopoOrder()
@@ -254,8 +260,10 @@ func (m *Manager) UpdateMeta(name, description string) error {
 // 调用方需持有写锁。
 func (m *Manager) commitNodesLocked(candidate []*model.Node) error {
 	newCfg := &model.DAGConfig{
+		ID:          m.cfg.ID,
 		Name:        m.cfg.Name,
 		Description: m.cfg.Description,
+		Schedule:    m.cfg.Schedule,
 		Nodes:       candidate,
 	}
 	d, err := dag.Build(newCfg)
@@ -278,7 +286,8 @@ func (m *Manager) persistLocked() error {
 	return nil
 }
 
-// TriggerRun 触发一次新的执行；若已有执行在进行中则返回错误
+// TriggerRun 触发一次新的执行；若已有执行在进行中则返回错误。
+// ctx 为外部传入的上下文，内部会用 WithCancel 派生一个可取消的子上下文。
 func (m *Manager) TriggerRun(ctx context.Context) (*engine.Run, error) {
 	m.mu.Lock()
 	if m.running {
@@ -286,6 +295,9 @@ func (m *Manager) TriggerRun(ctx context.Context) (*engine.Run, error) {
 		return nil, fmt.Errorf("已有执行正在进行中，请稍后再试")
 	}
 	m.running = true
+	runCtx, cancel := context.WithCancel(context.Background())
+	m.cancelRun = cancel // 存储取消函数，供 ForceStop 使用
+
 	run := &engine.Run{
 		ID:        time.Now().Format("20060102-150405.000"),
 		StartedAt: time.Now(),
@@ -301,13 +313,131 @@ func (m *Manager) TriggerRun(ctx context.Context) (*engine.Run, error) {
 	m.mu.Unlock()
 
 	go func() {
-		eng.Execute(ctx, d, run)
+		eng.Execute(runCtx, d, run)
+		cancel() // 释放 cancel 资源
 		m.mu.Lock()
 		m.running = false
+		m.cancelRun = nil
+		sk := m.sink
+		pid := m.cfg.ID
 		m.mu.Unlock()
+		// 运行结束后持久化到外部后端（若已配置插件）
+		if sk != nil {
+			if err := sk.Save(runToRecord(pid, run)); err != nil {
+				log.Printf("持久化运行记录失败 [%s/%s]: %v", pid, run.ID, err)
+			}
+		}
 	}()
 
 	return run, nil
+}
+
+// SetSink 设置运行记录持久化后端（nil 表示仅内存）。
+func (m *Manager) SetSink(s sink.Sink) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.sink = s
+}
+
+// LoadHistory 从持久化后端加载最近 limit 条历史记录到内存，
+// 使服务重启后历史仍可见。未配置后端或后端不支持查询时为空操作。
+func (m *Manager) LoadHistory(limit int) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.sink == nil {
+		return nil
+	}
+	recs, err := m.sink.List(m.cfg.ID, limit)
+	if err != nil {
+		return err
+	}
+	runs := make([]*engine.Run, 0, len(recs))
+	for _, rec := range recs {
+		runs = append(runs, recordToRun(rec))
+	}
+	m.runs = runs
+	return nil
+}
+
+// runToRecord 将内存 Run 转换为可持久化的 RunRecord。
+func runToRecord(pipelineID string, r *engine.Run) *sink.RunRecord {
+	snap := r.Snapshot()
+	rec := &sink.RunRecord{
+		PipelineID: pipelineID,
+		RunID:      snap.ID,
+		StartedAt:  snap.StartedAt,
+		Finished:   snap.Finished,
+	}
+	if snap.EndedAt != nil {
+		rec.EndedAt = *snap.EndedAt
+	}
+	for _, nr := range snap.Nodes {
+		n := sink.NodeRecord{
+			ID:       nr.ID,
+			Name:     nr.Name,
+			Status:   string(nr.Status),
+			ExitCode: nr.ExitCode,
+			Stdout:   nr.Stdout,
+			Stderr:   nr.Stderr,
+			Error:    nr.Error,
+		}
+		if nr.StartedAt != nil {
+			n.Started = *nr.StartedAt
+		}
+		if nr.EndedAt != nil {
+			n.Ended = *nr.EndedAt
+		}
+		rec.Nodes = append(rec.Nodes, n)
+	}
+	return rec
+}
+
+// recordToRun 将持久化记录还原为内存 Run（用于历史恢复）。
+func recordToRun(rec *sink.RunRecord) *engine.Run {
+	run := &engine.Run{
+		ID:        rec.RunID,
+		StartedAt: rec.StartedAt,
+		Finished:  rec.Finished,
+		Nodes:     make(map[string]*engine.NodeResult, len(rec.Nodes)),
+	}
+	if !rec.EndedAt.IsZero() {
+		e := rec.EndedAt
+		run.EndedAt = &e
+	}
+	for i := range rec.Nodes {
+		nr := rec.Nodes[i]
+		res := &engine.NodeResult{
+			ID:       nr.ID,
+			Name:     nr.Name,
+			Status:   engine.NodeStatus(nr.Status),
+			ExitCode: nr.ExitCode,
+			Stdout:   nr.Stdout,
+			Stderr:   nr.Stderr,
+			Error:    nr.Error,
+		}
+		if !nr.Started.IsZero() {
+			s := nr.Started
+			res.StartedAt = &s
+		}
+		if !nr.Ended.IsZero() {
+			e := nr.Ended
+			res.EndedAt = &e
+		}
+		run.Nodes[nr.ID] = res
+	}
+	return run
+}
+
+// ForceStop 强制停止当前正在执行的任务（取消上下文）。
+// 无任务执行时返回错误。
+func (m *Manager) ForceStop() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.running || m.cancelRun == nil {
+		return fmt.Errorf("当前没有正在执行的任务")
+	}
+	m.cancelRun()
+	return nil
 }
 
 // GetRun 根据 ID 获取执行记录快照

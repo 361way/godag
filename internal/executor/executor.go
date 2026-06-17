@@ -113,10 +113,12 @@ func buildShellCmd(ctx context.Context, n *model.Node) (*exec.Cmd, func(), error
 // buildScriptCmd 构造解释型脚本命令（python）
 // 优先使用 Command 指定的脚本文件；若提供 Script 内联内容则写入临时文件执行
 func buildScriptCmd(ctx context.Context, n *model.Node, interpreter, ext string) (*exec.Cmd, func(), error) {
-	// 解析解释器：python 优先 python3
+	// 解析解释器：优先用 PythonBin（支持多 venv），否则自动查找 python3 → python
 	bin := interpreter
 	if interpreter == "python" {
-		if p, err := exec.LookPath("python3"); err == nil {
+		if n.PythonBin != "" {
+			bin = n.PythonBin
+		} else if p, err := exec.LookPath("python3"); err == nil {
 			bin = p
 		}
 	}

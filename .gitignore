@@ -3,3 +3,12 @@ dag-app
 
 # 运行时数据目录（流水线配置文件）
 pipelines/
+
+# 插件编译产物（.so，可由 build-plugins.sh 重新生成）
+plugins/build/
+
+# 运行记录持久化文件（各 Sink 后端默认输出）
+run-logs/
+*.bolt
+*.sqlite
+*.duckdb

@@ -178,9 +178,11 @@
     </div>
   </div>
   <div class="toolbar">
+    <span class="status-pill badge-pending" id="sink-badge" title="运行记录持久化后端">存储: …</span>
     <span class="status-pill badge-pending" id="sched-badge" style="display:none"></span>
     <span class="status-pill badge-pending" id="global-status">就绪</span>
     <button id="btn-run">▶ 运行</button>
+    <button id="btn-stop" style="display:none;background:#b91c1c;border-color:#b91c1c">■ 停止</button>
     <button class="ghost" id="btn-sched">⏰ 计划</button>
     <button class="ghost" id="btn-add">＋ 节点</button>
     <button class="ghost" id="btn-layout">⊞ 布局</button>
@@ -268,11 +270,13 @@ let currentPid = '';
 function q(extra) { return '?pipeline=' + encodeURIComponent(currentPid) + (extra ? '&' + extra : ''); }
 const api = {
   pipelines: () => fetch('/api/pipelines').then(r => r.json()),
+  sink:   () => fetch('/api/sink').then(r => r.json()),
   createPipeline: (b) => post('/api/pipeline/create', b),
   deletePipeline: (id) => post('/api/pipeline/delete', { id }),
   saveSchedule: (sch) => post('/api/pipeline/schedule' + q(), sch),
   dag:    () => fetch('/api/dag' + q()).then(r => r.json()),
   run:    () => fetch('/api/run' + q(), { method: 'POST' }).then(r => r.json()),
+  stop:   () => fetch('/api/run/stop' + q(), { method: 'POST' }).then(r => r.json()),
   runs:   () => fetch('/api/runs' + q()).then(r => r.json()),
   runById:(id) => fetch('/api/run/' + id + q()).then(r => r.ok ? r.json() : null),
   latest: () => fetch('/api/run/latest' + q()).then(r => r.ok ? r.json() : null),
@@ -440,6 +444,7 @@ async function loadDAG() {
   gs.textContent = info.running ? '执行中…' : '就绪';
   gs.className = 'status-pill ' + (info.running ? 'badge-running' : 'badge-pending');
   document.getElementById('btn-run').disabled = info.running;
+  document.getElementById('btn-stop').style.display = info.running ? '' : 'none';
 
   autoLayoutMissing();
   render();
@@ -741,6 +746,7 @@ function renderInspector() {
     <div class="field"><label>参数（每行一个）</label><textarea id="f-args">${escapeHtml((n.args||[]).join('\n'))}</textarea></div>
     <div class="field"><label>工作目录</label><input id="f-workdir" value="${escapeHtml(n.workdir||'')}"></div>
     <div class="field"><label>环境变量（每行 KEY=VALUE）</label><textarea id="f-env">${escapeHtml((n.env||[]).join('\n'))}</textarea></div>
+    <div class="field" id="f-pybin-wrap" style="display:none"><label>Python 解释器路径（多 venv 时指定）</label><input id="f-pybin" value="${escapeHtml(n.python_bin||'')}" placeholder="留空自动查找 python3 → python，如 /path/to/venv/bin/python3"></div>
     <div class="field"><label>超时（秒，0 不限）</label><input id="f-timeout" type="number" min="0" value="${n.timeout_sec||0}"></div>
     <div class="row" style="justify-content:space-between;margin-top:6px">
       <button class="danger small" id="f-del">删除节点</button>
@@ -750,6 +756,11 @@ function renderInspector() {
     c.addEventListener('click', () => c.classList.toggle('active')));
   document.getElementById('f-save').onclick = saveCurrent;
   document.getElementById('f-del').onclick = deleteCurrent;
+  // Python 解释器字段根据类型显隐
+  const typeSel = document.getElementById('f-type');
+  const togglePyBin = () => { document.getElementById('f-pybin-wrap').style.display = typeSel.value === 'python' ? '' : 'none'; };
+  typeSel.addEventListener('change', togglePyBin);
+  togglePyBin();
 }
 
 function linesToArr(t){ return t.split('\n').map(s=>s.trim()).filter(Boolean); }
@@ -768,6 +779,7 @@ async function saveCurrent() {
     workdir: document.getElementById('f-workdir').value.trim(),
     env: linesToArr(document.getElementById('f-env').value),
     timeout_sec: parseInt(document.getElementById('f-timeout').value, 10) || 0,
+    python_bin: document.getElementById('f-pybin').value.trim(),
   };
   const res = await api.saveNode(node);
   if (res && res.error) { alert('保存失败：' + res.error); return; }
@@ -818,6 +830,13 @@ document.getElementById('btn-run').onclick = async () => {
   viewRunId = 'latest';
   switchTab('logs');
   setTimeout(refreshRun, 300);
+};
+
+document.getElementById('btn-stop').onclick = async () => {
+  if (!confirm('确定要强制停止当前正在执行的任务吗？')) return;
+  const res = await api.stop();
+  if (res.error) { alert(res.error); return; }
+  setTimeout(() => loadDAG().then(refreshRun), 300);
 };
 
 async function refreshRun() {
@@ -880,7 +899,25 @@ setInterval(() => {
 
 /* ============ 初始化 ============ */
 applyView();
+async function loadSinkBadge() {
+  const badge = document.getElementById('sink-badge');
+  try {
+    const s = await api.sink();
+    if (s && s.persistent) {
+      badge.textContent = '存储: ' + s.name;
+      badge.className = 'status-pill badge-success';
+      badge.title = '运行记录持久化后端：' + s.name + '（重启不丢失）';
+    } else {
+      badge.textContent = '存储: 内存';
+      badge.className = 'status-pill badge-pending';
+      badge.title = '运行记录仅保存在内存中，重启后丢失。可通过 -sink-plugin 启用持久化后端';
+    }
+  } catch (e) {
+    badge.style.display = 'none';
+  }
+}
 (async () => {
+  await loadSinkBadge();
   await loadPipelines();
   await refreshAll();
   setTimeout(fitView, 80);

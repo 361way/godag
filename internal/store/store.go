@@ -4,6 +4,7 @@ package store
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -13,6 +14,7 @@ import (
 	"dag-app/internal/config"
 	"dag-app/internal/manager"
 	"dag-app/internal/model"
+	"dag-app/internal/sink"
 )
 
 var idPattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
@@ -25,6 +27,7 @@ type Store struct {
 	mgrs        map[string]*manager.Manager
 	paths       map[string]string // id -> 配置文件路径
 	order       []string          // 保持流水线展示顺序
+	sink        sink.Sink         // 运行记录持久化后端（可选）
 }
 
 // New 创建 Store 并从目录加载全部流水线配置文件
@@ -114,6 +117,31 @@ func (s *Store) ImportConfig(cfg *model.DAGConfig) error {
 	return s.loadFile(path)
 }
 
+// SetSink 为所有现有流水线设置持久化后端，并加载各自的历史记录。
+// 后续通过 Create 新建的流水线也会自动继承该后端。
+func (s *Store) SetSink(sk sink.Sink) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sink = sk
+	for _, id := range s.order {
+		m := s.mgrs[id]
+		m.SetSink(sk)
+		if err := m.LoadHistory(50); err != nil {
+			log.Printf("加载持久化历史失败 [%s]: %v", id, err)
+		}
+	}
+}
+
+// SinkInfo 返回当前持久化后端名称及是否已启用持久化。
+func (s *Store) SinkInfo() (string, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.sink == nil {
+		return "", false
+	}
+	return s.sink.Name(), true
+}
+
 // Count 返回流水线数量
 func (s *Store) Count() int {
 	s.mu.RLock()
@@ -191,6 +219,9 @@ func (s *Store) Create(id, name, description string) (*manager.Manager, error) {
 	if err != nil {
 		_ = os.Remove(path)
 		return nil, err
+	}
+	if s.sink != nil {
+		mgr.SetSink(s.sink)
 	}
 	s.mgrs[id] = mgr
 	s.paths[id] = path

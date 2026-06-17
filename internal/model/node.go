@@ -40,6 +40,10 @@ type Node struct {
 	// 超时时间（秒），0 表示不超时
 	TimeoutSec int `json:"timeout_sec" yaml:"timeout_sec"`
 
+	// Python 解释器路径（可选）。多 venv 环境时指定完整路径，如 /path/to/venv/bin/python3
+	// 留空则自动查找 python3 → python
+	PythonBin string `json:"python_bin" yaml:"python_bin,omitempty"`
+
 	// 画布坐标（用于 N8N 风格可视化编辑器，持久化节点布局）
 	X float64 `json:"x" yaml:"x,omitempty"`
 	Y float64 `json:"y" yaml:"y,omitempty"`
